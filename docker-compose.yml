@@ -1,0 +1,22 @@
+
+services:
+  collector:
+    image: prchen818/collector:v0.4
+    container_name: otel-collector
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "6831:6831" # Jaeger Thrift over UDP
+    volumes:
+      - ./config.yml:/app/config.yml
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/jaeger:2.3.0
+    container_name: jaeger
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # Jaeger gRPC
+      - "14268:14268"   # Jaeger HTTP
+#      - "4317:4317"     # OTLP gRPC
