@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otelcollector-config
+data:
+  config.yml: |
+    # 这里会被自动覆盖，无需手动编辑
+

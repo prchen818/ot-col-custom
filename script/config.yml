@@ -20,14 +20,11 @@ receivers:
 # 在这里分别定义两个处理器的配置
 processors:
   batch:
-  attributesfilter:
-    drop:
-      - key: "service.name"
-        value: "traces-demo"
+
 
 exporters:
   debug:
-    verbosity: normal
+    verbosity: basic
 
   otlp:
     endpoint: jaeger:4317
@@ -37,7 +34,9 @@ exporters:
   file:
     format: json
     path: ./traces
-
+  kafka:
+    brokers:
+      - kafka:9092
 
 
 service:
@@ -45,4 +44,4 @@ service:
     traces:
       receivers: [otlp, jaeger]
       processors: [batch]
-      exporters: [otlp, file]
+      exporters: [otlp, kafka, debug]
