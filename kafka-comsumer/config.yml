@@ -3,5 +3,5 @@ kafka:
     - "localhost:9093"
 consumer:
   topic: "otlp_spans"
-  rate: 2
+  rate: 10
 

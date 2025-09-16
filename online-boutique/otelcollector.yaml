@@ -26,7 +26,6 @@ spec:
             protocol: UDP
           - containerPort: 6832
             protocol: UDP
-        args: ["--config=/etc/otelcol/config.yml"]
         env:
         - name: POD_NAME
           valueFrom:
@@ -43,14 +42,7 @@ spec:
           limits:
             cpu: 300m
             memory: 300Mi
-        volumeMounts:
-          - name: otelcollector-config-vol
-            mountPath: /etc/otelcol/config.yml
-            subPath: config.yml
-      volumes:
-        - name: otelcollector-config-vol
-          configMap:
-            name: otelcollector-config
+
 ---
 apiVersion: v1
 kind: Service

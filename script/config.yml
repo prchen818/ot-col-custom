@@ -44,4 +44,4 @@ service:
     traces:
       receivers: [otlp, jaeger]
       processors: [batch]
-      exporters: [otlp, kafka, debug]
+      exporters: [file, otlp, debug]
