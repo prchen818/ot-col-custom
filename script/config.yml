@@ -20,6 +20,8 @@ receivers:
 # 在这里分别定义两个处理器的配置
 processors:
   batch:
+    send_batch_size:
+    timeout: 0s
 
 
 exporters:
@@ -44,4 +46,4 @@ service:
     traces:
       receivers: [otlp, jaeger]
       processors: [batch]
-      exporters: [file, otlp, debug]
+      exporters: [kafka, otlp, debug]

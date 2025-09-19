@@ -1,4 +1,4 @@
-module kafka-comsumer
+module github.com/prchen818/ot-col-custom/kafka-comsumer
 
 go 1.24.6
 

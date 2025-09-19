@@ -2,18 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"fmt"
+	"github.com/prchen818/ot-col-custom/pkg/csv_util"
 	"gopkg.in/yaml.v3"
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/segmentio/kafka-go"
-	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 type Config struct {
@@ -45,91 +42,41 @@ func loadConfig(path string) (*Config, error) {
 }
 
 var (
-	csvFile     *os.File
-	csvWriter   *csv.Writer
-	csvMutex    sync.Mutex
 	kafkaReader *kafka.Reader
 	tasks       chan struct{}
 )
 
-func writeCSV(ts string, lag int64, waitMs int64) {
-	csvMutex.Lock()
-	defer csvMutex.Unlock()
-	if csvWriter != nil {
-		_ = csvWriter.Write([]string{ts, fmt.Sprintf("%d", lag), fmt.Sprintf("%d", waitMs)})
-		csvWriter.Flush()
-	}
-}
-
-func initCSV() error {
-	var err error
-	csvFile, err = os.OpenFile("kafka_metrics.csv", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+func consume(ctx context.Context) {
+	readStart := time.Now()
+	m, err := kafkaReader.ReadMessage(ctx)
+	readDuration := time.Since(readStart)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			log.Printf("[worker] 消费被取消")
+			return
+		}
+		log.Printf("[worker] 消费消息出错: %v", err)
+		return
 	}
-	csvWriter = csv.NewWriter(csvFile)
-	_ = csvWriter.Write([]string{"timestamp", "lag", "wait_ms"})
-	csvWriter.Flush()
-	return nil
+
+	lag := kafkaReader.Stats().Lag
+	waitMs := time.Since(m.Time).Milliseconds()
+	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	csv_util.WriteCSV(ts, lag, waitMs)
+	log.Printf("[worker] 读取耗时: %v，lag: %d，waitMs: %d", readDuration, lag, waitMs)
+
 }
 
-func closeCSV() {
-	csvMutex.Lock()
-	defer csvMutex.Unlock()
-	if csvWriter != nil {
-		csvWriter.Flush()
-	}
-	if csvFile != nil {
-		_ = csvFile.Close()
-	}
-}
-
-func waitForSignal(cancel context.CancelFunc) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		sig := <-sigCh
-		log.Printf("收到终止信号: %v，准备退出...", sig)
-		cancel()
-	}()
-}
-
-func consume(ctx context.Context, unmarshaler *ptrace.ProtoUnmarshaler, id int) {
+func startWorkers(ctx context.Context) {
+	//unmarshaler := &ptrace.ProtoUnmarshaler{}
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[worker-%d] 消费被取消", id)
+			log.Printf("[worker] 消费被取消")
 			return
 		case <-tasks:
-			readStart := time.Now()
-			m, err := kafkaReader.ReadMessage(ctx)
-			readDuration := time.Since(readStart)
-			if err != nil {
-				if ctx.Err() != nil {
-					log.Printf("[worker-%d] 消费被取消", id)
-					return
-				}
-				log.Printf("[worker-%d] 消费消息出错: %v", id, err)
-				continue
-			}
-			//unmarshalStart := time.Now()
-			//traces, _ := unmarshaler.UnmarshalTraces(m.Value)
-			//unmarshalDuration := time.Since(unmarshalStart)
-
-			lag := m.HighWaterMark - m.Offset
-			waitMs := time.Since(m.Time).Milliseconds()
-			ts := time.Now().Format("2006-01-02 15:04:05.000")
-			writeCSV(ts, lag, waitMs)
-
-			log.Printf("[worker-%d] 读取耗时: %v，lag: %d，waitMs: %d", id, readDuration, lag, waitMs)
+			consume(ctx)
 		}
-	}
-}
-
-func startWorkers(workerNum int, ctx context.Context) {
-	unmarshaler := &ptrace.ProtoUnmarshaler{}
-	for i := 0; i < workerNum; i++ {
-		go consume(ctx, unmarshaler, i)
 	}
 }
 
@@ -143,10 +90,10 @@ func main() {
 	}
 	log.Printf("配置: %+v", cfg)
 
-	if err := initCSV(); err != nil {
+	if err := csv_util.InitCSV("kafka_metrics.csv"); err != nil {
 		log.Fatalf("无法初始化csv文件: %v", err)
 	}
-	defer closeCSV()
+	defer csv_util.CloseCSV()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -173,7 +120,7 @@ func main() {
 	workerNum := 4 // 可根据CPU核数或实际情况调整
 	tasks = make(chan struct{}, workerNum*2)
 
-	startWorkers(workerNum, ctx)
+	startWorkers(ctx)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -192,4 +139,14 @@ func main() {
 			}
 		}
 	}
+}
+
+func waitForSignal(cancel context.CancelFunc) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("收到终止信号: %v，准备退出...", sig)
+		cancel()
+	}()
 }
