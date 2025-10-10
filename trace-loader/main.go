@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"github.com/prchen818/ot-col-custom/pkg/csv_util"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
@@ -33,6 +35,12 @@ func main() {
 	}
 	client := ptraceotlp.NewGRPCClient(cc)
 
+	// 初始化CSV文件
+	if err := csv_util.InitCSV("rate_log.csv", []string{"timestamp", "rate"}); err != nil {
+		log.Fatalf("初始化CSV失败: %v", err)
+	}
+	defer csv_util.CloseCSV()
+
 	// 预设速率变化序列，每个阶段持续10秒
 	rateSequence := []int{20, 40, 60, 90, 100, 80, 50, 30, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20}
 	stageDuration := 10 // 每个速率阶段持续秒数
@@ -44,6 +52,9 @@ func main() {
 		for sec := 0; sec < stageDuration; sec++ {
 			<-ticker.C
 			start := time.Now()
+			// 记录当前时间戳和rate到csv
+			ts := start.Format("2006-01-02 15:04:05.000")
+			csv_util.WriteCSV([]string{ts, fmt.Sprintf("%d", rate)})
 			for i := 0; i < rate; i++ {
 				idx := rand.Intn(len(traces))
 				traceData := traces[idx]
