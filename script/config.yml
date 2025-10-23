@@ -21,13 +21,21 @@ receivers:
 processors:
   tail_sampling:
     sample_rate: 0.1
-    update_interval: 10
+    update_interval: 3
     kafka:
       brokers:
         - kafka:9092
       topic: "otlp_spans"
       group: "my-group"
     dynamic: true
+    controller:
+      kp: 0.5
+      ki: 0
+      kd: 0.01
+      alpha: 0.2
+      lag_threshold: 20
+      lag_base: 200
+
   batch:
   groupbytrace:
     wait_duration: 1s
@@ -54,4 +62,4 @@ service:
     traces:
       receivers: [otlp, jaeger]
       processors: [tail_sampling]
-      exporters: [kafka, debug]
+      exporters: [kafka]

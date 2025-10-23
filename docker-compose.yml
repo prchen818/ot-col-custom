@@ -9,8 +9,10 @@ services:
     volumes:
       - ./script/config.yml:/app/config.yml
     depends_on:
-      - jaeger
-      - kafka
+      jaeger:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
   jaeger:
     image: jaegertracing/jaeger:2.3.0
@@ -43,6 +45,11 @@ services:
       - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
       - ALLOW_PLAINTEXT_LISTENER=yes
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     depends_on:
     - zookeeper
 

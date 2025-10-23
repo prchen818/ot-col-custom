@@ -35,7 +35,7 @@ type tailSamplingSpanProcessor struct {
 	sampledCount    int64
 	windowStartTime time.Time
 
-	pidController *PIDController // PID 控制器
+	controller *Controller
 }
 
 func newTracesProcessor(
@@ -44,13 +44,6 @@ func newTracesProcessor(
 	nextConsumer consumer.Traces,
 	cfg Config,
 ) (processor.Traces, error) {
-	// 初始化 Sarama Kafka 客户端
-	kafkaCfg := sarama.NewConfig()
-	client, err := sarama.NewClient(cfg.Kafka.Brokers, kafkaCfg)
-	if err != nil {
-		set.Logger.Error("Failed to create Kafka client", zap.Error(err))
-		return nil, err
-	}
 
 	tsp := &tailSamplingSpanProcessor{
 		ctx:             ctx,
@@ -59,9 +52,8 @@ func newTracesProcessor(
 		nextConsumer:    nextConsumer,
 		config:          cfg,
 		currSampleRate:  cfg.SampleRate,
-		kafkaClient:     client,
 		windowStartTime: time.Now(),
-		pidController:   NewPIDController(0.5, 0.1, 0.1), // PID 参数可调
+		controller:      NewController(cfg, set.Logger),
 	}
 	//if cfg.Dynamic {
 	tsp.StartSampleRateUpdater()
@@ -77,7 +69,6 @@ func (tsp *tailSamplingSpanProcessor) StartSampleRateUpdater() {
 		for {
 			select {
 			case <-ticker.C:
-				tsp.getMQLag()
 				tsp.updateSampleRate()
 			case <-tsp.ctx.Done():
 				tsp.logger.Info("Sample rate updater stopped")
@@ -88,11 +79,7 @@ func (tsp *tailSamplingSpanProcessor) StartSampleRateUpdater() {
 }
 
 func (tsp *tailSamplingSpanProcessor) updateSampleRate() {
-	//windowDuration := time.Duration(tsp.config.UpdateInterval) * time.Second
-	//now := time.Now()
-	//if now.Sub(tsp.windowStartTime) < windowDuration {
-	//	return // 窗口未结束，不调整采样率
-	//}
+
 	// 计算实际采样率
 	actualRate := 0.0
 	if tsp.traceCount > 0 {
@@ -106,60 +93,18 @@ func (tsp *tailSamplingSpanProcessor) updateSampleRate() {
 		return
 	}
 	targetRate := tsp.config.SampleRate
-	newRate := tsp.pidController.Update(targetRate, actualRate)
-	tsp.logger.Info("PID采样率调整", zap.Float64("target", targetRate), zap.Float64("actual", actualRate), zap.Float64("new", newRate))
-	tsp.currSampleRate = newRate
+	delta := tsp.controller.Update(targetRate, actualRate)
+	tsp.currSampleRate = max(0, tsp.currSampleRate+delta)
 	// 重置窗口计数
-	tsp.traceCount = 0
-	tsp.sampledCount = 0
+	tsp.logger.Info("PID采样率调整",
+		zap.Float64("target", targetRate),
+		zap.Float64("actual", actualRate),
+		zap.Float64("new", tsp.currSampleRate),
+		zap.Float64("delta", delta),
+	)
+	//tsp.traceCount = 0
+	//tsp.sampledCount = 0
 	tsp.windowStartTime = time.Now()
-}
-
-func (tsp *tailSamplingSpanProcessor) getMQLag() int64 {
-	if tsp.kafkaClient == nil {
-		tsp.logger.Warn("Kafka client not initialized")
-		return -1
-	}
-	topic := tsp.config.Kafka.Topic
-	group := tsp.config.Kafka.Group // 需在 config 里加 Group 字段
-	partitions, err := tsp.kafkaClient.Partitions(topic)
-	if err != nil {
-		tsp.logger.Error("Failed to get partitions", zap.Error(err))
-		return -1
-	}
-	// 创建 OffsetManager
-	om, err := sarama.NewOffsetManagerFromClient(group, tsp.kafkaClient)
-	if err != nil {
-		tsp.logger.Error("Failed to create OffsetManager", zap.Error(err))
-		return -1
-	}
-	defer om.Close()
-
-	var totalLag int64
-	for _, partition := range partitions {
-		latestOffset, err := tsp.kafkaClient.GetOffset(topic, partition, sarama.OffsetNewest)
-		if err != nil {
-			tsp.logger.Error("Failed to get latest offset", zap.Error(err))
-			continue
-		}
-		pom, err := om.ManagePartition(topic, partition)
-		if err != nil {
-			tsp.logger.Error("Failed to manage partition", zap.Error(err))
-			continue
-		}
-		committedOffset, _ := pom.NextOffset()
-		pom.Close()
-		if committedOffset < 0 {
-			committedOffset = 0 // 未提交时视为0
-		}
-		lag := latestOffset - committedOffset
-		if lag < 0 {
-			lag = 0
-		}
-		totalLag += lag
-	}
-	tsp.logger.Info("Kafka topic lag", zap.String("topic", topic), zap.Int64("total_lag", totalLag))
-	return totalLag
 }
 
 func (tsp *tailSamplingSpanProcessor) ConsumeTraces(_ context.Context, td ptrace.Traces) error {
@@ -170,10 +115,10 @@ func (tsp *tailSamplingSpanProcessor) ConsumeTraces(_ context.Context, td ptrace
 		tsp.sampledCount++
 		isSampled = true
 		tsp.exportTraces(td)
-		tsp.logger.Info("✅️ Trace sampled and exported")
+		//tsp.logger.Info("✅️ Trace sampled and exported")
 	}
 	if !isSampled {
-		tsp.logger.Info("❌️ Trace not sampled")
+		//tsp.logger.Info("❌️ Trace not sampled")
 	}
 	return nil
 }
