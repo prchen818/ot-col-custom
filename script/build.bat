@@ -1,8 +1,9 @@
 @echo off
 set SCRIPT_DIR=%~dp0
 cd /d %SCRIPT_DIR%
+cd ..
 
-docker build -t prchen818/collector:latest -f Dockerfile .
+docker build -t prchen818/collector:latest -f script/Dockerfile .
 
 if %errorlevel% neq 0 (
     echo 镜像构建失败！
@@ -15,3 +16,8 @@ for /f "tokens=3" %%i in ('docker images prchen818/collector --filter "dangling=
     docker rmi -f %%i
 )
 echo 已删除所有悬空的 prchen818/collector 镜像。
+
+
+
+
+

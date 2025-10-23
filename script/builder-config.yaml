@@ -4,6 +4,8 @@ dist:
   output_path: ./
   otelcol_version: "v0.135.0" # 我们使用一个稳定版本
 
+replaces:
+  - github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor => ./tailsamplingprocessor
 
 receivers:
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.135.0
@@ -15,6 +17,7 @@ processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/filterprocessor v0.135.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbytraceprocessor v0.135.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor v0.135.0
+
 
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.135.0

@@ -4,16 +4,17 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/prchen818/ot-col-custom/pkg/csv_util"
-	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"log"
 	"math/rand"
 	"os"
 	"time"
+
+	"github.com/prchen818/ot-col-custom/pkg/csv_util"
+	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -42,8 +43,8 @@ func main() {
 	defer csv_util.CloseCSV()
 
 	// 预设速率变化序列，每个阶段持续10秒
-	rateSequence := []int{20, 40, 60, 90, 100, 80, 50, 30, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20}
-	stageDuration := 10 // 每个速率阶段持续秒数
+	rateSequence := []int{40, 80, 180, 300, 300, 300, 240, 160, 100, 80, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 100, 200, 100, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40}
+	stageDuration := 20 // 每个速率阶段持续秒数
 
 	log.Printf("开始按照预设速率序列发送trace到: %s", endpoint)
 	for stage, rate := range rateSequence {

@@ -1,0 +1,10 @@
+type: tail_sampling
+
+status:
+  class: processor
+  stability:
+    beta: [traces]
+  distributions: [contrib, k8s]
+
+tests:
+  config:

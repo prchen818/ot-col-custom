@@ -15,7 +15,7 @@ var (
 // InitCSV 初始化CSV文件，支持自定义header
 func InitCSV(path string, header []string) error {
 	var err error
-	csvFile, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	csvFile, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}

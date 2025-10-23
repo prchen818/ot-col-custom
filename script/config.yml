@@ -19,10 +19,18 @@ receivers:
 
 # 在这里分别定义两个处理器的配置
 processors:
+  tail_sampling:
+    sample_rate: 0.1
+    update_interval: 10
+    kafka:
+      brokers:
+        - kafka:9092
+      topic: "otlp_spans"
+      group: "my-group"
+    dynamic: true
   batch:
-    send_batch_size:
-    timeout: 0s
-
+  groupbytrace:
+    wait_duration: 1s
 
 exporters:
   debug:
@@ -45,5 +53,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp, jaeger]
-      processors: [batch]
-      exporters: [kafka, otlp, debug]
+      processors: [tail_sampling]
+      exporters: [kafka, debug]
