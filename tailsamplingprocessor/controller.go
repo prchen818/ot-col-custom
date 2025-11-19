@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"github.com/IBM/sarama"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor/cache"
 	"go.uber.org/zap"
 )
 
@@ -17,54 +18,69 @@ type Controller struct {
 	topic   string
 	groupID string
 
-	Kp, Ki, Kd float64
-	prevError  float64
-	integral   float64
+	cfg ControllerConfig
 
-	alpha        float64
-	lagThreshold int64
-	lagBase      int64
+	totalCount   int64
+	sampledCount int64
+	target       float64
+	integral     *cache.FIFOCache[float64]
+	prevError    float64
 }
 
-func NewController(cfg Config, logger *zap.Logger) *Controller {
+func NewController(cfg Config, logger *zap.Logger) (*Controller, error) {
 	// 初始化 Sarama Kafka 客户端
 	kafkaCfg := sarama.NewConfig()
 	client, err := sarama.NewClient(cfg.Kafka.Brokers, kafkaCfg)
 	if err != nil {
 		logger.Error(err.Error())
+		return nil, err
 	}
 	clusterAdmin, err := sarama.NewClusterAdminFromClient(client)
 	if err != nil {
 		log.Fatalf("无法创建 sarama cluster admin: %v", err)
 	}
-	return &Controller{
-		Kp:           cfg.Controller.Kp,
-		Ki:           cfg.Controller.Ki,
-		Kd:           cfg.Controller.Kd,
-		client:       client,
-		logger:       logger,
-		topic:        cfg.Kafka.Topic,
-		groupID:      cfg.Kafka.Group,
-		admin:        clusterAdmin,
-		alpha:        cfg.Controller.Alpha,
-		lagThreshold: cfg.Controller.LagThreshold,
-		lagBase:      cfg.Controller.LagBase,
+	buffer, err := cache.NewFIFOCache[float64](cfg.Controller.BufferSize, func(f float64, f2 float64) float64 {
+		return f + f2
+	}, 0)
+	if err != nil {
+		logger.Error(err.Error())
+
 	}
+	return &Controller{
+		cfg:      cfg.Controller,
+		client:   client,
+		logger:   logger,
+		topic:    cfg.Kafka.Topic,
+		groupID:  cfg.Kafka.Group,
+		admin:    clusterAdmin,
+		integral: buffer,
+		target:   cfg.SampleRate,
+	}, nil
 }
 
-func (c *Controller) Update(target, actual float64) float64 {
-	error := target - actual
-	c.integral += error
+func (c *Controller) Update(current float64) float64 {
+	if c.totalCount > c.cfg.ShrinkThreshold {
+		c.ShrinkCounts()
+	}
+	actual := float64(c.sampledCount) / float64(c.totalCount)
+	error := c.target - actual
+	c.integral.Add(error)
 	derivative := error - c.prevError
 	c.prevError = error
-	deltaPid := c.Kp*error + c.Ki*c.integral + c.Kd*derivative
+	deltaPid := c.cfg.Kp*error + c.cfg.Ki*c.integral.Sum() + c.cfg.Kd*derivative
 
-	deltaFlow := -c.alpha * actual
+	deltaFlow := -c.cfg.Alpha * current
 
 	lag, _ := c.GetLag()
-	lagWeight := max(0.0, float64(lag-c.lagThreshold)/float64(lag+c.lagBase)) // 简单平滑
+	lagWeight := max(0.0, float64(lag-c.cfg.LagThreshold)/float64(lag+c.cfg.LagBase)) // 简单平滑
 	c.logger.Info("偏差计算", zap.Float64("deltaPid", deltaPid), zap.Float64("deltaFlow", deltaFlow), zap.Float64("lagWeight", lagWeight), zap.Int64("lag", lag))
 	return deltaPid*(1-lagWeight) + deltaFlow*lagWeight
+}
+
+func (c *Controller) ShrinkCounts() {
+	scaleSize := int64(float64(c.sampledCount) * c.cfg.ShrinkFactor)
+	c.sampledCount -= scaleSize
+	c.totalCount -= int64(float64(scaleSize) / c.target)
 }
 
 func (c *Controller) GetLag() (int64, error) {

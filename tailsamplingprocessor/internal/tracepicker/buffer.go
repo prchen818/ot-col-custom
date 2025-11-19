@@ -4,6 +4,7 @@ package tracepicker
 
 import (
 	"sync"
+
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -11,13 +12,13 @@ import (
 // 它会区分正常和异常追踪。
 type SharedBuffer struct {
 	limit          uint64
-	mutex          sync.Mutex
+	mutex          sync.RWMutex
 	typeMap        map[string][]ptrace.Traces // Key: typeID, Value: 该类型下的正常追踪列表
-	abnormalTraces []ptrace.Traces          // 异常追踪列表
-	count          uint64                   // 缓冲区中的总追踪数
+	abnormalTraces []ptrace.Traces            // 异常追踪列表
+	count          uint64                     // 缓冲区中的总追踪数
 }
 
-// NewSharedBuffer 是 SharedBuffer 的构造函数。
+// NewSharedBuffer
 func NewSharedBuffer(limit uint64) *SharedBuffer {
 	return &SharedBuffer{
 		limit:          limit,
@@ -42,26 +43,26 @@ func (b *SharedBuffer) Add(typeID string, trace ptrace.Traces, isAbnormal bool) 
 
 // IsFull 检查缓冲区是否已满。
 func (b *SharedBuffer) IsFull() bool {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
 	return b.count >= b.limit
 }
 
 // IsEmpty 检查缓冲区是否为空。
 func (b *SharedBuffer) IsEmpty() bool {
-    b.mutex.Lock()
-    defer b.mutex.Unlock()
-    return b.count == 0
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+	return b.count == 0
 }
 
 // Count 返回缓冲区中当前的追踪总数。
 func (b *SharedBuffer) Count() uint64 {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
 	return b.count
 }
 
-// 这个方法持有锁的时间极短，只在交换指针和计数器时加锁。
+// SwapAndClear 交换并清空缓冲区，返回当前存储的数据。
 func (b *SharedBuffer) SwapAndClear() (map[string][]ptrace.Traces, []ptrace.Traces, uint64) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()

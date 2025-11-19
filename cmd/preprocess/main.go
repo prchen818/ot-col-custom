@@ -1,20 +1,183 @@
 package main
 
 import (
-	"bufio"
-	"io"
+	"fmt"
 	"log"
-	"os"
+	"math"
+	"time"
 
+	"github.com/prchen818/ot-col-custom/pkg/util"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 func main() {
-	traces, err := LoadData("traces")
+	traces, err := util.LoadData("data/traces_more_clean.txt")
 	if err != nil {
 		log.Fatalf("加载数据失败: %v", err)
 	}
+	//checkErrorTrace(traces)
+	//checkGroupBy(traces)
+	checkErrorSpan(traces)
+}
 
+func checkErrorSpan(traces []ptrace.Traces) bool {
+	totalSpanCount := 0
+	errorSpanCount := 0
+	spanLatenciesByName := make(map[string][]time.Duration)
+
+	for _, trace := range traces {
+		resourceSpans := trace.ResourceSpans()
+		for j := 0; j < resourceSpans.Len(); j++ {
+			rs := resourceSpans.At(j)
+			scopeSpans := rs.ScopeSpans()
+			for k := 0; k < scopeSpans.Len(); k++ {
+				ss := scopeSpans.At(k)
+				spans := ss.Spans()
+				for l := 0; l < spans.Len(); l++ {
+					span := spans.At(l)
+					totalSpanCount++
+
+					if span.Status().Code() == ptrace.StatusCodeError {
+						errorSpanCount++
+					}
+
+					latency := span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime())
+					spanLatenciesByName[span.Name()] = append(spanLatenciesByName[span.Name()], latency)
+				}
+			}
+		}
+	}
+
+	if totalSpanCount > 0 {
+		log.Printf("错误Span占比: %.2f%% (%d/%d)", float64(errorSpanCount)*100/float64(totalSpanCount), errorSpanCount, totalSpanCount)
+	} else {
+		log.Println("没有找到任何Span。")
+		return true
+	}
+
+	log.Printf("--- 按 span.name 划分的延迟分布 %d ---", len(spanLatenciesByName))
+	totalOutliers3Sigma := 0
+	for name, latencies := range spanLatenciesByName {
+		count := len(latencies)
+		if count < 2 { // 需要至少2个点来计算标准差
+			log.Printf("Span Name: %s (数量: %d) - 数据点不足，跳过正态分布计算", name, count)
+			continue
+		}
+
+		var sum time.Duration
+		for _, lat := range latencies {
+			sum += lat
+		}
+		// 均值 (ns)
+		mean := float64(sum) / float64(count)
+
+		// 计算标准差 (ns)
+		var sumOfSquares float64
+		for _, lat := range latencies {
+			diff := float64(lat) - mean
+			sumOfSquares += diff * diff
+		}
+		variance := sumOfSquares / float64(count)
+		stdDev := math.Sqrt(variance)
+
+		// 计算超出3-sigma的span数量
+		threshold3Sigma := mean + 3*stdDev
+		outliers3Sigma := 0
+		for _, lat := range latencies {
+			if float64(lat) > threshold3Sigma {
+				outliers3Sigma++
+			}
+		}
+		totalOutliers3Sigma += outliers3Sigma
+
+		log.Printf("Span Name: %s (数量: %d)", name, count)
+		log.Printf("  延迟正态分布: 均值=%v, 标准差=%v", time.Duration(mean), time.Duration(stdDev))
+		log.Printf("  大于3-sigma的Span数量: %d", outliers3Sigma)
+	}
+	log.Printf("--- 统计汇总 ---")
+	log.Printf("所有Span中大于各自组内3-sigma的Span总个数: %d", totalOutliers3Sigma)
+	return errorSpanCount > 0
+}
+
+func checkErrorTrace(traces []ptrace.Traces) {
+	errorCount := 0
+	// 统计在假设每条trace中所有span的traceID相同的前提下，缺少根span的trace数量
+	missingRootCount := 0
+
+	// firstSeen: traceIDHex -> first trace index where it appeared
+	firstSeen := make(map[string]int)
+	// duplicates: set of traceIDHex that appear in multiple top-level traces
+	duplicates := make(map[string]struct{})
+
+	for i, trace := range traces {
+		errFlag := false
+		// seenInThisTrace 用于避免同一 trace 内重复计数同一 traceID
+		seenInThisTrace := make(map[string]struct{})
+		// hasRoot 表示本条 trace 中是否存在根span（ParentSpanID 为空）
+		hasRoot := 0
+
+		resourceSpans := trace.ResourceSpans()
+		for j := 0; j < resourceSpans.Len(); j++ {
+			rs := resourceSpans.At(j)
+			scopeSpans := rs.ScopeSpans()
+			for k := 0; k < scopeSpans.Len(); k++ {
+				ss := scopeSpans.At(k)
+				spans := ss.Spans()
+				for l := 0; l < spans.Len(); l++ {
+					span := spans.At(l)
+
+					if span.Status().Code() == ptrace.StatusCodeError {
+						errFlag = true
+						log.Printf("trace[%d] 存在错误状态的span: %s", i, span.SpanID())
+					}
+
+					// 如果 ParentSpanID 为空（零值），说明这是一个根span
+					if span.ParentSpanID().IsEmpty() {
+						hasRoot++
+					}
+
+					// 使用十六进制表示 TraceID，更直观且唯一
+					traceIDHex := fmt.Sprintf("%x", span.TraceID())
+					if _, ok := seenInThisTrace[traceIDHex]; ok {
+						continue
+					}
+					seenInThisTrace[traceIDHex] = struct{}{}
+
+					if firstIdx, ok := firstSeen[traceIDHex]; ok {
+						if firstIdx != i {
+							log.Printf("trace[%d] 与 trace[%d] 存在相同的TraceID: %s", i, firstIdx, traceIDHex)
+							duplicates[traceIDHex] = struct{}{}
+						}
+					} else {
+						firstSeen[traceIDHex] = i
+					}
+				}
+			}
+		}
+
+		// 如果本条 trace 中所有 span 的 traceID 相同（seenInThisTrace 长度为 1），
+		// 并且没有检测到任何根 span，则统计为缺少根span的trace
+		if len(seenInThisTrace) == 1 {
+			if hasRoot == 0 {
+				missingRootCount++
+				log.Printf("trace[%d] 缺少 root span", i)
+			} else if hasRoot > 1 {
+				log.Printf("trace[%d] 存在多个 root span (%d 个)", i, hasRoot)
+			}
+
+		}
+
+		if errFlag {
+			errorCount++
+		}
+	}
+
+	log.Printf("总共有 %d/%d 条trace包含错误状态的span", errorCount, len(traces))
+	log.Printf("检测到 %d 个跨trace重复的TraceID", len(duplicates))
+	log.Printf("缺少根span的trace数量: %d", missingRootCount)
+}
+
+func checkGroupBy(traces []ptrace.Traces) {
 	for i, trace := range traces {
 		allSame := true
 		var firstTraceID []byte
@@ -45,39 +208,8 @@ func main() {
 				break
 			}
 		}
-		if allSame {
-			log.Printf("trace[%d] 所有span的traceID一致: %x", i, firstTraceID)
-		} else {
+		if !allSame {
 			log.Printf("trace[%d] 存在不同的traceID", i)
 		}
 	}
-}
-
-func LoadData(path string) ([]ptrace.Traces, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	unmarshaler := &ptrace.JSONUnmarshaler{}
-	var traces []ptrace.Traces
-
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-		}
-
-		trace, err := unmarshaler.UnmarshalTraces(line)
-		if err != nil {
-			log.Printf("反序列化trace失败: %v", err)
-			continue
-		}
-		traces = append(traces, trace)
-	}
-	return traces, nil
 }

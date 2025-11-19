@@ -45,3 +45,6 @@ go.work*
 
 /result
 /.ipynb_checkpoints
+*.txt
+traces_raw
+traces

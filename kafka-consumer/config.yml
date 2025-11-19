@@ -1,7 +1,0 @@
-kafka:
-  brokers:
-    - "localhost:9093"
-consumer:
-  topic: "otlp_spans"
-  rate: 10
-

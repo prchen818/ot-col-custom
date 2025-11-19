@@ -8,6 +8,7 @@ services:
       - "6831:6831" # Jaeger Thrift over UDP
     volumes:
       - ./script/config.yml:/app/config.yml
+      - ./data/:/app/data
     depends_on:
       jaeger:
         condition: service_started
@@ -53,13 +54,29 @@ services:
     depends_on:
     - zookeeper
 
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    ports:
-      - "8080:8080"
-    environment:
-      - KAFKA_CLUSTERS_0_NAME=local
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+#  kafka-ui:
+#    image: provectuslabs/kafka-ui:latest
+#    container_name: kafka-ui
+#    ports:
+#      - "8080:8080"
+#    environment:
+#      - KAFKA_CLUSTERS_0_NAME=local
+#      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+#    depends_on:
+#      - kafka
+
+  kafka-consumer:
+    build:
+      context: .
+      dockerfile: cmd/kafka-consumer/Dockerfile
+      no_cache: true
+    container_name: kafka-consumer
+    volumes:
+      - ./cmd/kafka-consumer/config.yml:/app/config.yml
+      - ./data/:/app/data
+    command: ["/app/kafka-consumer", "/app/config.yml"]
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    environment:
+      - DATASET=media
