@@ -1,23 +1,45 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"time"
 
 	"github.com/prchen818/ot-col-custom/pkg/util"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 func main() {
-	traces, err := util.LoadData("data/traces_more_clean.txt")
+	traces, err := util.LoadData("data/trainticket/ot_trace.txt")
 	if err != nil {
 		log.Fatalf("加载数据失败: %v", err)
 	}
+	log.Printf("traces: %v", len(traces))
 	//checkErrorTrace(traces)
 	//checkGroupBy(traces)
-	checkErrorSpan(traces)
+	//checkErrorSpan(traces)
+	checkTypes(traces)
+}
+
+func checkTypes(traces []ptrace.Traces) {
+	typeCount := make(map[string]int)
+	for _, trace := range traces {
+		id, abnormal := util.Encode(trace)
+		if abnormal {
+			id = "abnormal"
+		}
+		if _, ok := typeCount[id]; !ok {
+			typeCount[id] = 1
+		} else {
+			typeCount[id]++
+		}
+	}
+	log.Printf("检测到的类型 (%d)", len(typeCount))
+	log.Printf("----------------")
+	for k, v := range typeCount {
+		log.Printf("数量: %d, 类型: %s", v, k)
+	}
 }
 
 func checkErrorSpan(traces []ptrace.Traces) bool {
@@ -105,14 +127,14 @@ func checkErrorTrace(traces []ptrace.Traces) {
 	missingRootCount := 0
 
 	// firstSeen: traceIDHex -> first trace index where it appeared
-	firstSeen := make(map[string]int)
+	firstSeen := make(map[pcommon.TraceID]int)
 	// duplicates: set of traceIDHex that appear in multiple top-level traces
-	duplicates := make(map[string]struct{})
+	duplicates := make(map[pcommon.TraceID]struct{})
 
 	for i, trace := range traces {
 		errFlag := false
 		// seenInThisTrace 用于避免同一 trace 内重复计数同一 traceID
-		seenInThisTrace := make(map[string]struct{})
+		seenInThisTrace := make(map[pcommon.TraceID]struct{})
 		// hasRoot 表示本条 trace 中是否存在根span（ParentSpanID 为空）
 		hasRoot := 0
 
@@ -137,19 +159,19 @@ func checkErrorTrace(traces []ptrace.Traces) {
 					}
 
 					// 使用十六进制表示 TraceID，更直观且唯一
-					traceIDHex := fmt.Sprintf("%x", span.TraceID())
-					if _, ok := seenInThisTrace[traceIDHex]; ok {
+					traceID := span.TraceID()
+					if _, ok := seenInThisTrace[traceID]; ok {
 						continue
 					}
-					seenInThisTrace[traceIDHex] = struct{}{}
+					seenInThisTrace[traceID] = struct{}{}
 
-					if firstIdx, ok := firstSeen[traceIDHex]; ok {
+					if firstIdx, ok := firstSeen[traceID]; ok {
 						if firstIdx != i {
-							log.Printf("trace[%d] 与 trace[%d] 存在相同的TraceID: %s", i, firstIdx, traceIDHex)
-							duplicates[traceIDHex] = struct{}{}
+							log.Printf("trace[%d] 与 trace[%d] 存在相同的TraceID: %s", i, firstIdx, traceID)
+							duplicates[traceID] = struct{}{}
 						}
 					} else {
-						firstSeen[traceIDHex] = i
+						firstSeen[traceID] = i
 					}
 				}
 			}
@@ -164,7 +186,6 @@ func checkErrorTrace(traces []ptrace.Traces) {
 			} else if hasRoot > 1 {
 				log.Printf("trace[%d] 存在多个 root span (%d 个)", i, hasRoot)
 			}
-
 		}
 
 		if errFlag {

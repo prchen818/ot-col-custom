@@ -21,7 +21,7 @@ receivers:
 processors:
   tail_sampling:
     sample_rate: 0.1
-    batch_size: 100
+    batch_size: 200
     update_interval: 3
     kafka:
       brokers:
@@ -32,8 +32,8 @@ processors:
     mode: quota
     controller:
       kp: 0.3
-      ki: 0.0
-      kd: 0.1
+      ki: 0.02
+      kd: 0.17
       alpha: 0.2
       lag_threshold: 20
       lag_base: 100
@@ -59,7 +59,7 @@ exporters:
 
   file:
     format: json
-    path: ./data/traces.txt
+    path: ./data/${env:DATASET:-}/result.txt
   kafka:
     brokers:
       - kafka:9092

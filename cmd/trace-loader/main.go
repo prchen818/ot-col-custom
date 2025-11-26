@@ -18,7 +18,7 @@ import (
 func main() {
 	dataset := os.Getenv("DATASET")
 	if dataset == "" {
-		dataset = "media"
+		dataset = "error-mid"
 	}
 	path := fmt.Sprintf("data/%s/ot_trace.txt", dataset)
 
@@ -114,18 +114,60 @@ func stressTestFixedOrder(
 		log.Printf("已发送 %d 条trace, 用时: %v", int(float64(rate)*stageDuration), time.Since(start))
 		start = time.Now()
 	}
-	if traceIndex < len(traces) {
-		// 发送剩余的trace
-		log.Printf("发送剩余 %d 条trace", len(traces)-traceIndex)
-		for traceIndex < len(traces) {
-			traceData := traces[traceIndex]
-			_, err := client.Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(traceData))
-			if err != nil {
-				log.Printf("发送trace失败: %v", err)
-			}
-			traceIndex++
-		}
+	ticker.Stop() // 停止阶段ticker
 
+	// 按整体平均速率发送最后剩余的trace，而不是一次性发送
+	if traceIndex < len(traces) {
+		remaining := len(traces) - traceIndex
+
+		// 计算整体平均速率 = 所有阶段速率的算术平均
+		sumRates := 0
+		for _, r := range rateSequence {
+			sumRates += r
+		}
+		avgRate := float64(sumRates) / float64(len(rateSequence))
+		base := int(avgRate)
+		frac := avgRate - float64(base)
+		acc := 0.0
+
+		log.Printf("发送剩余 %d 条trace，按平均速率 %.2f 条/秒", remaining, avgRate)
+
+		perSecTicker := time.NewTicker(time.Second)
+		defer perSecTicker.Stop()
+
+		for remaining > 0 {
+			<-perSecTicker.C
+
+			// 每秒应发送的条数（处理小数部分累积，逼近平均值）
+			sendCount := base
+			acc += frac
+			if acc >= 1.0 {
+				sendCount++
+				acc -= 1.0
+			}
+			if sendCount > remaining {
+				sendCount = remaining
+			}
+
+			start := time.Now()
+			ts := start.Format("2006-01-02 15:04:05.000")
+			util.WriteCSV([]string{ts, fmt.Sprintf("%d", int(avgRate))})
+
+			for i := 0; i < sendCount; i++ {
+				traceData := traces[traceIndex]
+				_, err := client.Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(traceData))
+				if err != nil {
+					log.Printf("发送trace失败: %v", err)
+				}
+				traceIndex++
+				// 保持与前面一致的索引回绕逻辑，防止越界
+				if traceIndex >= len(traces) {
+					traceIndex = 0
+				}
+				remaining--
+			}
+			log.Printf("已发送 %d 条trace(剩余 %d), 用时: %v", sendCount, remaining, time.Since(start))
+		}
 	}
 	log.Printf("已发送 %d / %d 条trace，程序退出", traceIndex, len(traces))
 }

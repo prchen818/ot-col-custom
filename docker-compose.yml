@@ -14,6 +14,23 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
+    environment:
+      - DATASET=error-mid
+  kafka-consumer:
+    environment:
+      - DATASET=error-mid
+    build:
+      context: .
+      dockerfile: cmd/kafka-consumer/Dockerfile
+      no_cache: true
+    container_name: kafka-consumer
+    volumes:
+      - ./cmd/kafka-consumer/config.yml:/app/config.yml
+      - ./data/:/app/data
+    command: ["/app/kafka-consumer", "/app/config.yml"]
+    depends_on:
+      kafka:
+        condition: service_healthy
 
   jaeger:
     image: jaegertracing/jaeger:2.3.0
@@ -65,18 +82,4 @@ services:
 #    depends_on:
 #      - kafka
 
-  kafka-consumer:
-    build:
-      context: .
-      dockerfile: cmd/kafka-consumer/Dockerfile
-      no_cache: true
-    container_name: kafka-consumer
-    volumes:
-      - ./cmd/kafka-consumer/config.yml:/app/config.yml
-      - ./data/:/app/data
-    command: ["/app/kafka-consumer", "/app/config.yml"]
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      - DATASET=media
+

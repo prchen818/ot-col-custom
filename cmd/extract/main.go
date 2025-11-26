@@ -9,25 +9,40 @@ import (
 )
 
 func main() {
-	dataset := "media"
+	dataset := "error-mid"
 	allTraces, _ := util.LoadData(fmt.Sprintf("data/%s/ot_trace.txt", dataset))
-	sampledTraces, _ := util.LoadData("data/traces.txt")
-	err := util.InitCSV(fmt.Sprintf("data/res/%s-NEW-sample.csv", dataset), []string{"traceId", "decision"})
+	sampledTraces, _ := util.LoadData(fmt.Sprintf("data/%s/result.txt", dataset))
+	err := util.InitCSV(fmt.Sprintf("data/res/%s-RATS-sample.csv", dataset), []string{"traceId", "decision"})
 
 	if err != nil {
 		log.Fatal(err)
 	}
 	allIds := extractTraceIDs(allTraces)
 	sampledIds := extractTraceIDs(sampledTraces)
-
+	var f func(id string) string
+	if dataset == "trainticket" || dataset == "error-mid" {
+		idMap, err := util.LoadMapFromJson(fmt.Sprintf("data/%s/traceid_map.json", dataset))
+		if err != nil {
+			log.Fatal(err)
+		}
+		f = func(id string) string {
+			return idMap[id]
+		}
+	} else if dataset == "sockshop" || dataset == "media" || dataset == "socialNetwork" {
+		f = func(id string) string {
+			return id[:16]
+		}
+	} else {
+		f = func(id string) string {
+			return id
+		}
+	}
 	for id := range allIds {
 		decision := "false"
 		if _, ok := sampledIds[id]; ok {
 			decision = "true"
 		}
-		if dataset == "sockshop" || dataset == "media" || dataset == "socialNetwork" {
-			id = id[:16]
-		}
+		id = f(id)
 		util.WriteCSV([]string{id, decision})
 	}
 }
